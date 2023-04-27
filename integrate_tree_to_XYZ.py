@@ -15,24 +15,14 @@ def rescale(x , current_bounds, new_bounds):
     x_scaled = (( x - current_bounds[0] )  / ( current_bounds[1]- current_bounds[0]))
     return new_bounds[0] + x_scaled * (new_bounds[1]-new_bounds[0])
 
-def make_pseudo_spherical( tree, 
-                            long_limits = [-np.pi * 120/180 , np.pi * 120/180],
-                            lat_limits = [-np.pi * 60/180 , np.pi * 60/180] ):
+def get_pseudo_sphere_bounds( tree ):
     """
-    transforms a representation where modern points occupy the xy plane and the z-axis is used to represent time
-    into a spherical representation centered on the tree root.
-
-    we use simple inverse mercator projection to go from the xy plane to longitude latitude, hence we recommend putting limits
-    on latitude to prevent extreme deformation,
-    and on longitude to avoid having distance point being brought very clode on the back of the sphere.
-
+    Compute X,Y,Z bounds for re-scaling prior to projection on a pseudo-sphere
     Takes:
         - tree (ete3.Tree) : the tree structure where nodes have a .coordinates attribute
-        - long_limits = [-np.pi * 120/180 , np.pi * 120/180] : limits the longitude of the sphere we project into
-        - lat_limits = [-np.pi * 60/180 , np.pi * 60/180] : limits the latitude of the sphere we project into
-
-    """
-
+    Returns:
+        (tuple) of 3 tuples of X, Y, Z bounds
+    """    
     # re-scaling 
 
     ## finding the bound of the current projection
@@ -58,6 +48,61 @@ def make_pseudo_spherical( tree,
             X_bounds[0] = z
         elif z > Z_bounds[1]:
             Z_bounds[1] = z
+
+    return X_bounds,Y_bounds,Z_bounds
+
+def project_to_pseudo_spherical( x,y,z, 
+                            X_bounds,Y_bounds,Z_bounds,
+                            long_limits = [-np.pi * 120/180 , np.pi * 120/180],
+                            lat_limits = [-np.pi * 60/180 , np.pi * 60/180] ):
+    """
+    transforms a single point to a representation where modern points occupy the xy plane and the z-axis is used to represent time
+    into a spherical representation centered on the tree root.
+
+    we use simple inverse mercator projection to go from the xy plane to longitude latitude, hence we recommend putting limits
+    on latitude to prevent extreme deformation,
+    and on longitude to avoid having distance point being brought very clode on the back of the sphere.
+
+    Takes:
+        - x (float): original x-coordinate
+        - y (float): original y-coordinate
+        - z (float): original z-coordinate
+        - X_bounds (tuple): X bounds, used for rescaling
+        - Y_bounds (tuple): Y bounds, used for rescaling
+        - Z_bounds (tuple): Z bounds, used for rescaling
+        - long_limits = [-np.pi * 120/180 , np.pi * 120/180] : limits the longitude of the sphere we project into
+        - lat_limits = [-np.pi * 60/180 , np.pi * 60/180] : limits the latitude of the sphere we project into
+
+    Return :
+        (tuple) of 3 floats, x,y,z of the input point in the pseudo-sphere projection 
+    """
+    lng = rescale( x , X_bounds , long_limits )
+    lat = rescale( y , Y_bounds , lat_limits )
+    R   = rescale( z , Z_bounds , Z_bounds )
+
+    return latLong2xyz( lat , lng , R )
+
+
+def make_pseudo_spherical( tree, X_bounds,Y_bounds,Z_bounds,
+                            long_limits = [-np.pi * 120/180 , np.pi * 120/180],
+                            lat_limits = [-np.pi * 60/180 , np.pi * 60/180] ):
+    """
+    transforms a representation where modern points occupy the xy plane and the z-axis is used to represent time
+    into a spherical representation centered on the tree root.
+
+    we use simple inverse mercator projection to go from the xy plane to longitude latitude, hence we recommend putting limits
+    on latitude to prevent extreme deformation,
+    and on longitude to avoid having distance point being brought very clode on the back of the sphere.
+
+    Takes:
+        - tree (ete3.Tree) : the tree structure where nodes have a .coordinates attribute
+        - X_bounds (tuple): X bounds, used for rescaling
+        - Y_bounds (tuple): Y bounds, used for rescaling
+        - Z_bounds (tuple): Z bounds, used for rescaling
+        - long_limits = [-np.pi * 120/180 , np.pi * 120/180] : limits the longitude of the sphere we project into
+        - lat_limits = [-np.pi * 60/180 , np.pi * 60/180] : limits the latitude of the sphere we project into
+
+    """
 
     for n in tree.traverse():
         x,y,z = n.coordinates
@@ -95,6 +140,9 @@ if __name__ == "__main__":
              help='drag of internal nodes toward their parent.')
     parser.add_argument('--spherical-layout', action='store_true', required=False, 
              help='represent the tree as a sphere centered on the root. Incompatible with --use-z-from-file')
+    parser.add_argument('--ignore-missing', action='store_true', required=False, 
+             help='ignore points missing from the tree')
+    
 
     ## options to add:
     ##      - input leaves height
@@ -118,16 +166,16 @@ if __name__ == "__main__":
     if args.use_z_from_file:
         n_coords += 1
 
-    coordinates = XY.columns[:n_coords]
+    coordinates = list(XY.columns[:n_coords])
     
 
     if not coordinates[0] in 'xX':
-        print(' -> mapped first column {} as x coordinate'.format(x_coord))
+        print(' -> mapped first column {} as x coordinate'.format(coordinates[0]))
     if not coordinates[1] in 'yY':
-        print(' -> mapped second column {} as y coordinate'.format(y_coord))
+        print(' -> mapped second column {} as y coordinate'.format(coordinates[1]))
     if args.use_z_from_file:
         if not coordinates[2] in 'zZ':
-            print(' -> mapped second column {} as z coordinate'.format(y_coord))
+            print(' -> mapped second column {} as z coordinate'.format(coordinates[2]))
 
     if len(XY.columns)  > n_coords:
         print('Warning: ignoring columns after the 2nd one:', XY.columns[n_coords:])
@@ -135,14 +183,22 @@ if __name__ == "__main__":
     # reading tree
     tree = Tree( args.inputTree )
 
+    missing_leaves = pd.DataFrame( columns = XY.columns )
+
     leaf_set = set( [name for name in tree.iter_leaf_names()] )
     error = False
     for n in XY.index:
         if not n in leaf_set:
-            print("ERROR: {} is absent from the tree".format(n))
+            msg = "ERROR"
+            if args.ignore_missing:
+                msg = "Warning"
+                missing_leaves = pd.concat( [missing_leaves , XY.loc[[n],:]] )
+                XY.drop( index=n,inplace=True )
+            print("{}: {} is absent from the tree".format(msg,n))
             error = True
-    if error:
+    if error and not args.ignore_missing:
         exit(1)
+
 
     ## pruning tree from leaves absent from the file
     tree.prune( XY.index , preserve_branch_length=True)
@@ -180,8 +236,32 @@ if __name__ == "__main__":
         for n in tree.traverse('postorder'):
             ## apply height as z-axis
             n.coordinates.append(n.height * args.z_scale)
+
+        ## handling of missing leaves
+        if missing_leaves.shape[0]>0:
+            # assign average height as Z
+            AH = 0
+            N = 0
+            for n in tree.iter_leaves():
+                AH += n.coordinates[-1]
+                N += 1
+
+            missing_leaves["Z"] = AH/N
+            coordinates.append( "Z" )
+
         if args.spherical_layout:
-            tree = make_pseudo_spherical( tree )
+            X_bounds,Y_bounds,Z_bounds = get_pseudo_sphere_bounds( tree )
+            tree = make_pseudo_spherical( tree , X_bounds,Y_bounds,Z_bounds)
+            ## eventually project to pseudo-sphere
+
+            ## handling of missing leaves
+            for i,r in missing_leaves.iterrows():
+                x,y,z = r.loc[ coordinates ]
+                x,y,z = project_to_pseudo_spherical( x,y,z, 
+                                                    X_bounds,Y_bounds,Z_bounds)
+                r.loc[ coordinates ] = x,y,z
+
+
     ## output
 
     ### leaves
@@ -191,6 +271,10 @@ if __name__ == "__main__":
         print('name','x','y','z', sep=',' , file=OUT )
         for l in tree.iter_leaves():
             print(l.name , *(l.coordinates) , sep=',' , file=OUT )
+
+        for i,r in missing_leaves.iterrows():
+            x,y,z = r.loc[ coordinates ]
+            print(i , x,y,z , sep=',' , file=OUT )
 
 
     ### internal nodes
