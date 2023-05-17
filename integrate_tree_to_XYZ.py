@@ -115,6 +115,14 @@ def make_pseudo_spherical( tree, X_bounds,Y_bounds,Z_bounds,
     
     return tree
 
+def giveInternalNames(tree):
+    """give names to internal nodes which have none"""
+    i = 0
+    for n in tree.traverse():
+        if n.name == '' or n.name == '1': ## small limit if name is actually supposed to be 1
+            n.name = "internal{}".format(i)
+        i+=1
+    return tree
 
 
 if __name__ == "__main__":
@@ -181,7 +189,7 @@ if __name__ == "__main__":
         print('Warning: ignoring columns after the 2nd one:', XY.columns[n_coords:])
 
     # reading tree
-    tree = Tree( args.inputTree )
+    tree = Tree( args.inputTree , format = 1 )
 
     missing_leaves = pd.DataFrame( columns = XY.columns )
 
@@ -195,6 +203,7 @@ if __name__ == "__main__":
                 missing_leaves = pd.concat( [missing_leaves , XY.loc[[n],:]] )
                 XY.drop( index=n,inplace=True )
             print("{}: {} is absent from the tree".format(msg,n))
+            print("use the --ignore-missing option if you want to ignore this.")
             error = True
     if error and not args.ignore_missing:
         exit(1)
@@ -202,6 +211,9 @@ if __name__ == "__main__":
 
     ## pruning tree from leaves absent from the file
     tree.prune( XY.index , preserve_branch_length=True)
+
+    ## giving names to all nodes in the tree where they are missing
+    tree = giveInternalNames(tree)
 
     ## we will presume the root at height 0, and go down to the leaves from there
 
@@ -286,7 +298,7 @@ if __name__ == "__main__":
         for n in tree.traverse():
             if n.is_leaf():
                 continue
-            print( 'internal{}'.format(i) , *(n.coordinates) , sep=',' , file=OUT )
+            print( n.name , *(n.coordinates) , sep=',' , file=OUT )
             i+=1
     ### branches
     suffix = ".branches.csv"
@@ -297,7 +309,7 @@ if __name__ == "__main__":
         for n in tree.traverse():
             if n.is_root():
                 continue
-            print( 'branch{}'.format(i) , *(n.up.coordinates), *(n.coordinates) , sep=',' , file=OUT )
+            print( 'branch_{}'.format(n.name) , *(n.up.coordinates), *(n.coordinates) , sep=',' , file=OUT )
             i+=1
 
 
