@@ -130,6 +130,8 @@ def giveInternalNames(tree):
 
 def integrate_tree_to_XYZ(inputFile, inputTree, z_scale=1.0, use_z_from_file=False, drag=0.2, spherical_layout=False, ignore_missing=False):
 
+    print("input tree:", inputTree)
+    print("input coordinates:", inputFile)
     if drag < 0 or drag > 1:
         print("Error: --drag must be between 0.0 and 1.0")
         exit(1)
@@ -159,7 +161,14 @@ def integrate_tree_to_XYZ(inputFile, inputTree, z_scale=1.0, use_z_from_file=Fal
     if len(XY.columns)  > n_coords:
         print('Warning: ignoring columns after the 2nd one:', XY.columns[n_coords:])
 
-    # reading tree
+    # reading tree. Load the file into a string first; some tree files have
+    # dos line endings, which can cause problems on some systems. As of this writing
+    # (2024-05-04, May the Fourth be with you), the ete3 library only runs on Linux
+    # (or MacOS) and apparently does not handle dos line endings when reading
+    # newick files created on Windows.
+    with open(inputTree, 'r') as f:
+        inputTree = f.read().replace('\r', '')
+
     tree = Tree( inputTree , format = 1 )
 
     missing_leaves = pd.DataFrame( columns = XY.columns )
@@ -247,6 +256,47 @@ def integrate_tree_to_XYZ(inputFile, inputTree, z_scale=1.0, use_z_from_file=Fal
 
     return tree, missing_leaves
 
+
+# Make a dataframe that contains the coordinates of the leaves, including the missing ones.
+def get_leaves_dataframe(tree, missing_leaves):
+
+    # Make a dataframe with columns 'name', 'x', 'y', 'z'. Iterate through the leaves
+    # and add their coordinates to the dataframe. Then iterate through the missing leaves
+    # and add their coordinates to the dataframe.
+    df = pd.DataFrame(columns=['name', 'x', 'y', 'z'])
+    list = []
+    for l in tree.iter_leaves():
+        df.loc[len(df.index)] = [l.name] + l.coordinates[:3]
+    for i, r in missing_leaves.iterrows():
+        x,y,z = r.loc[ coordinates ]
+        df.loc[len(df.index)] = [i] + [x,y,z]
+
+    return df
+
+def get_internal_nodes_dataframe(tree):
+    # Make a dataframe with columns 'name', 'x', 'y', 'z'. Iterate through the internal nodes
+    # and add their coordinates to the dataframe.
+
+    df = pd.DataFrame(columns=['name', 'x', 'y', 'z'])
+    for n in tree.traverse():
+        if n.is_leaf():
+            continue
+        df.loc[len(df.index)] = [n.name] + n.coordinates[:3]
+        
+    return df
+
+def get_branches_dataframe(tree):
+    # Make a dataframe with columns 'name', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'. Iterate through the nodes
+    # and add the coordinates of the node and its parent to the dataframe.
+
+    df = pd.DataFrame(columns=['name', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'])
+    for n in tree.traverse():
+        if n.is_root():
+            continue
+        df = df.append({'name': 'branch_{}'.format(n.name), 
+                        'x0': n.up.coordinates[0], 'y0': n.up.coordinates[1], 'z0': n.up.coordinates[2], 
+                        'x1': n.coordinates[0], 'y1': n.coordinates[1], 'z1': n.coordinates[2]}, ignore_index=True)
+    return df
 
 
 if __name__ == "__main__":
