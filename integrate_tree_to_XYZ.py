@@ -264,9 +264,9 @@ def get_leaves_dataframe(tree, missing_leaves):
     # and add their coordinates to the dataframe. Then iterate through the missing leaves
     # and add their coordinates to the dataframe.
     df = pd.DataFrame(columns=['name', 'x', 'y', 'z'])
-    list = []
+
     for l in tree.iter_leaves():
-        df.loc[len(df.index)] = [l.name] + l.coordinates[:3]
+        df.loc[len(df.index)] = [l.name] + list(l.coordinates)
     for i, r in missing_leaves.iterrows():
         x,y,z = r.loc[ coordinates ]
         df.loc[len(df.index)] = [i] + [x,y,z]
@@ -281,7 +281,7 @@ def get_internal_nodes_dataframe(tree):
     for n in tree.traverse():
         if n.is_leaf():
             continue
-        df.loc[len(df.index)] = [n.name] + n.coordinates[:3]
+        df.loc[len(df.index)] = [n.name] + list(n.coordinates)
         
     return df
 
@@ -293,7 +293,7 @@ def get_branches_dataframe(tree):
     for n in tree.traverse():
         if n.is_root():
             continue
-        df.loc[len(df.index)] = ['branch_{}'.format(n.name)] + n.up.coordinates + n.coordinates
+        df.loc[len(df.index)] = ['branch_{}'.format(n.name)] + list(n.up.coordinates) + list(n.coordinates)
         #df = df.append({'name': 'branch_{}'.format(n.name), 
         #                'x0': n.up.coordinates[0], 'y0': n.up.coordinates[1], 'z0': n.up.coordinates[2], 
         #                'x1': n.coordinates[0], 'y1': n.coordinates[1], 'z1': n.coordinates[2]}, ignore_index=True)
