@@ -293,9 +293,10 @@ def get_branches_dataframe(tree):
     for n in tree.traverse():
         if n.is_root():
             continue
-        df = df.append({'name': 'branch_{}'.format(n.name), 
-                        'x0': n.up.coordinates[0], 'y0': n.up.coordinates[1], 'z0': n.up.coordinates[2], 
-                        'x1': n.coordinates[0], 'y1': n.coordinates[1], 'z1': n.coordinates[2]}, ignore_index=True)
+        df.loc[len(df.index)] = ['branch_{}'.format(n.name)] + n.up.coordinates + n.coordinates
+        #df = df.append({'name': 'branch_{}'.format(n.name), 
+        #                'x0': n.up.coordinates[0], 'y0': n.up.coordinates[1], 'z0': n.up.coordinates[2], 
+        #                'x1': n.coordinates[0], 'y1': n.coordinates[1], 'z1': n.coordinates[2]}, ignore_index=True)
     return df
 
 
