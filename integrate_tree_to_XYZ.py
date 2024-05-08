@@ -129,9 +129,6 @@ def giveInternalNames(tree):
 
 
 def integrate_tree_to_XYZ(inputFile, inputTree, z_scale=1.0, use_z_from_file=False, drag=0.2, spherical_layout=False, ignore_missing=False):
-
-    print("input tree:", inputTree)
-    print("input coordinates:", inputFile)
     if drag < 0 or drag > 1:
         print("Error: --drag must be between 0.0 and 1.0")
         exit(1)
