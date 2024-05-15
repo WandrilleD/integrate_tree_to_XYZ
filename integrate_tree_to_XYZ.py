@@ -282,7 +282,7 @@ def get_internal_nodes_dataframe(tree):
         
     return df
 
-def get_branches_dataframe(tree):
+def get_branches_dataframe(tree, omit_last_branch=False):
     # Make a dataframe with columns 'name', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'. Iterate through the nodes
     # and add the coordinates of the node and its parent to the dataframe.
 
@@ -290,7 +290,15 @@ def get_branches_dataframe(tree):
     for n in tree.traverse():
         if n.is_root():
             continue
-        df.loc[len(df.index)] = ['branch_{}'.format(n.name)] + list(n.up.coordinates) + list(n.coordinates)
+
+        # In some trees, the last branch extending to the leaves creates a lot of clutter.
+        # If omit_last_branch is True, we will not add the last branch to the dataframe.
+        # Ideally what we could do is omit the last 'n' branches, but for now we will just
+        # omit the last one.
+        if omit_last_branch and n.is_leaf():
+            continue
+        else:
+            df.loc[len(df.index)] = ['branch_{}'.format(n.name)] + list(n.up.coordinates) + list(n.coordinates)
         #df = df.append({'name': 'branch_{}'.format(n.name), 
         #                'x0': n.up.coordinates[0], 'y0': n.up.coordinates[1], 'z0': n.up.coordinates[2], 
         #                'x1': n.coordinates[0], 'y1': n.coordinates[1], 'z1': n.coordinates[2]}, ignore_index=True)
