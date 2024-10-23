@@ -125,53 +125,23 @@ def giveInternalNames(tree):
     return tree
 
 
-if __name__ == "__main__":
-    import sys
-    
 
 
-    import argparse
 
-    parser = argparse.ArgumentParser(
-            description="""Projects a tree structure in 3D from a set of coordinates of their leaves (by default 2D coordinates).""")
-    parser.add_argument('-i','--inputFile', type=str, required=True,
-         help='file containing x,y coordinates for each points (csv format, header expected, it is expected that the first column contains point id)')
-    parser.add_argument('-t','--inputTree', type=str, required=True,
-         help='tree in newick format. Leaves absent from the coordinate files will be ignored')
-    parser.add_argument('-o','--outputPrefix', type=str, required=True,
-         help='output file prefix for the x,y,z coordinates of points an lines')
-    parser.add_argument('--z-scale', type=float, default=1.0,
-             help='factor to rescale the z-axis (default:1.0)')
-    parser.add_argument('--use-z-from-file', action='store_true', required=False, 
-             help='uses the z-axis from the coordinate file.')
-    parser.add_argument('--drag', type=float, default=0.2, 
-             help='drag of internal nodes toward their parent.')
-    parser.add_argument('--spherical-layout', action='store_true', required=False, 
-             help='represent the tree as a sphere centered on the root. Incompatible with --use-z-from-file')
-    parser.add_argument('--ignore-missing', action='store_true', required=False, 
-             help='ignore points missing from the tree')
-    
-
-    ## options to add:
-    ##      - input leaves height
-
-
-    args = parser.parse_args()
-
-    drag = args.drag
+def integrate_tree_to_XYZ(inputFile, inputTree, z_scale=1.0, use_z_from_file=False, drag=0.2, spherical_layout=False, ignore_missing=False):
     if drag < 0 or drag > 1:
         print("Error: --drag must be between 0.0 and 1.0")
         exit(1)
 
-    if args.use_z_from_file and args.spherical_layout:
+    if use_z_from_file and spherical_layout:
         print("Warning: --spherical-layout is incompatible with --use-z-from-file and will be ignored.")
 
     ## reading coordinates
 
-    XY = pd.read_csv( args.inputFile , index_col=0)
+    XY = pd.read_csv( inputFile , index_col=0)
 
     n_coords = 2
-    if args.use_z_from_file:
+    if use_z_from_file:
         n_coords += 1
 
     coordinates = list(XY.columns[:n_coords])
@@ -181,15 +151,22 @@ if __name__ == "__main__":
         print(' -> mapped first column {} as x coordinate'.format(coordinates[0]))
     if not coordinates[1] in 'yY':
         print(' -> mapped second column {} as y coordinate'.format(coordinates[1]))
-    if args.use_z_from_file:
+    if use_z_from_file:
         if not coordinates[2] in 'zZ':
             print(' -> mapped second column {} as z coordinate'.format(coordinates[2]))
 
     if len(XY.columns)  > n_coords:
         print('Warning: ignoring columns after the 2nd one:', XY.columns[n_coords:])
 
-    # reading tree
-    tree = Tree( args.inputTree , format = 1 )
+    # reading tree. Load the file into a string first; some tree files have
+    # dos line endings, which can cause problems on some systems. As of this writing
+    # (2024-05-04, May the Fourth be with you), the ete3 library only runs on Linux
+    # (or MacOS) and apparently does not handle dos line endings when reading
+    # newick files created on Windows.
+    with open(inputTree, 'r') as f:
+        inputTree = f.read().replace('\r', '')
+
+    tree = Tree( inputTree , format = 1 )
 
     missing_leaves = pd.DataFrame( columns = XY.columns )
 
@@ -198,14 +175,14 @@ if __name__ == "__main__":
     for n in XY.index:
         if not n in leaf_set:
             msg = "ERROR"
-            if args.ignore_missing:
+            if ignore_missing:
                 msg = "Warning"
                 missing_leaves = pd.concat( [missing_leaves , XY.loc[[n],:]] )
                 XY.drop( index=n,inplace=True )
             print("{}: {} is absent from the tree".format(msg,n))
             print("use the --ignore-missing option if you want to ignore this.")
             error = True
-    if error and not args.ignore_missing:
+    if error and not ignore_missing:
         exit(1)
 
 
@@ -244,10 +221,10 @@ if __name__ == "__main__":
             continue
         n.coordinates = [n.coordinates[i]*(1-drag) + n.up.coordinates[i]*drag for i in range(len(n.coordinates))]
 
-    if not args.use_z_from_file:
+    if not use_z_from_file:
         for n in tree.traverse('postorder'):
             ## apply height as z-axis
-            n.coordinates.append(n.height * args.z_scale)
+            n.coordinates.append(n.height * z_scale)
 
         ## handling of missing leaves
         if missing_leaves.shape[0]>0:
@@ -261,7 +238,7 @@ if __name__ == "__main__":
             missing_leaves["Z"] = AH/N
             coordinates.append( "Z" )
 
-        if args.spherical_layout:
+        if spherical_layout:
             X_bounds,Y_bounds,Z_bounds = get_pseudo_sphere_bounds( tree )
             tree = make_pseudo_spherical( tree , X_bounds,Y_bounds,Z_bounds)
             ## eventually project to pseudo-sphere
@@ -274,7 +251,95 @@ if __name__ == "__main__":
                 r.loc[ coordinates ] = x,y,z
 
 
-    ## output
+    return tree, missing_leaves
+
+
+# Make a dataframe that contains the coordinates of the leaves, including the missing ones.
+def get_leaves_dataframe(tree, missing_leaves):
+
+    # Make a dataframe with columns 'name', 'x', 'y', 'z'. Iterate through the leaves
+    # and add their coordinates to the dataframe. Then iterate through the missing leaves
+    # and add their coordinates to the dataframe.
+    df = pd.DataFrame(columns=['name', 'x', 'y', 'z'])
+
+    for l in tree.iter_leaves():
+        df.loc[len(df.index)] = [l.name] + list(l.coordinates)
+    for i, r in missing_leaves.iterrows():
+        x,y,z = r.loc[ coordinates ]
+        df.loc[len(df.index)] = [i] + [x,y,z]
+
+    return df
+
+def get_internal_nodes_dataframe(tree):
+    # Make a dataframe with columns 'name', 'x', 'y', 'z'. Iterate through the internal nodes
+    # and add their coordinates to the dataframe.
+
+    df = pd.DataFrame(columns=['name', 'x', 'y', 'z'])
+    for n in tree.traverse():
+        if n.is_leaf():
+            continue
+        df.loc[len(df.index)] = [n.name] + list(n.coordinates)
+        
+    return df
+
+def get_branches_dataframe(tree, omit_last_branch=False):
+    # Make a dataframe with columns 'name', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'. Iterate through the nodes
+    # and add the coordinates of the node and its parent to the dataframe.
+
+    df = pd.DataFrame(columns=['name', 'x0', 'y0', 'z0', 'x1', 'y1', 'z1'])
+    for n in tree.traverse():
+        if n.is_root():
+            continue
+
+        # In some trees, the last branch extending to the leaves creates a lot of clutter.
+        # If omit_last_branch is True, we will not add the last branch to the dataframe.
+        # Ideally what we could do is omit the last 'n' branches, but for now we will just
+        # omit the last one.
+        if omit_last_branch and n.is_leaf():
+            continue
+        else:
+            df.loc[len(df.index)] = ['branch_{}'.format(n.name)] + list(n.up.coordinates) + list(n.coordinates)
+        #df = df.append({'name': 'branch_{}'.format(n.name), 
+        #                'x0': n.up.coordinates[0], 'y0': n.up.coordinates[1], 'z0': n.up.coordinates[2], 
+        #                'x1': n.coordinates[0], 'y1': n.coordinates[1], 'z1': n.coordinates[2]}, ignore_index=True)
+    return df
+
+
+if __name__ == "__main__":
+    import sys
+    
+
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+            description="""Projects a tree structure in 3D from a set of coordinates of their leaves (by default 2D coordinates).""")
+    parser.add_argument('-i','--inputFile', type=str, required=True,
+         help='file containing x,y coordinates for each points (csv format, header expected, it is expected that the first column contains point id)')
+    parser.add_argument('-t','--inputTree', type=str, required=True,
+         help='tree in newick format. Leaves absent from the coordinate files will be ignored')
+    parser.add_argument('-o','--outputPrefix', type=str, required=True,
+         help='output file prefix for the x,y,z coordinates of points an lines')
+    parser.add_argument('--z-scale', type=float, default=1.0,
+             help='factor to rescale the z-axis (default:1.0)')
+    parser.add_argument('--use-z-from-file', action='store_true', required=False, 
+             help='uses the z-axis from the coordinate file.')
+    parser.add_argument('--drag', type=float, default=0.2, 
+             help='drag of internal nodes toward their parent.')
+    parser.add_argument('--spherical-layout', action='store_true', required=False, 
+             help='represent the tree as a sphere centered on the root. Incompatible with --use-z-from-file')
+    parser.add_argument('--ignore-missing', action='store_true', required=False, 
+             help='ignore points missing from the tree')
+    
+
+    ## options to add:
+    ##      - input leaves height
+
+    args = parser.parse_args()
+
+    tree, missing_leaves = integrate_tree_to_XYZ(args.inputFile, args.inputTree, args.z_scale, 
+                                                 args.use_z_from_file, args.drag, args.spherical_layout, 
+                                                 args.ignore_missing)
 
     ### leaves
     suffix = ".leaves.csv"
@@ -311,7 +376,3 @@ if __name__ == "__main__":
                 continue
             print( 'branch_{}'.format(n.name) , *(n.up.coordinates), *(n.coordinates) , sep=',' , file=OUT )
             i+=1
-
-
-
-    
