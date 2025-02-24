@@ -125,6 +125,44 @@ def giveInternalNames(tree):
     return tree
 
 
+def project_to_sphere( xyz, R=1.0 ):
+    d = sum( [i**2 for i in xyz] )**0.5
+    return [i * R / d for i in xyz]
+
+def spherical_tree( tree , leaves_XYZ  , R = 1.0):
+    """
+        Presumes leaves_XYZ form a sphere of radius R centered on 0,0,0
+        this functions builds the coordinates for the tree branches inside the sphere
+
+        For simplicity's sake we will presume that leaves_XYZ is properly scaled and centered, if it is not, shenanigans and weird results will ensue
+    """
+
+    ## for each node, we want to find its distance from the center
+    ## this is a combination of branch lengths and distance of the node descendants
+
+    tree_height = max( [l.height  for l in tree.get_leaves()] )
+
+
+    for n in tree.traverse("postorder"):
+        if n.is_leaf() : # for leaves, use what's in the coordinate source file
+            n.coordinates = list( leaves_XYZ.loc[ n.name , ['x','y','z'] ] )
+        else: # use average of children
+            #sum
+            n.coordinates = project_to_sphere( n.children[0].coordinates[:] )
+            for ch in n.children[1:]:
+                ch_coord = project_to_sphere( ch.coordinates )
+                for i in range(len( n.coordinates )):
+                    n.coordinates[i] += ch_coord[i]
+            # normalize
+            for i in range(len( n.coordinates )):
+                n.coordinates[i] /= len(n.children)
+
+            # apply radius
+            radius = R *  n.height / tree_height
+            n.coordinates = project_to_sphere( n.coordinates, R=radius )
+    return tree
+
+
 if __name__ == "__main__":
     import sys
     
@@ -147,7 +185,7 @@ if __name__ == "__main__":
     parser.add_argument('--drag', type=float, default=0.2, 
              help='drag of internal nodes toward their parent.')
     parser.add_argument('--spherical-layout', action='store_true', required=False, 
-             help='represent the tree as a sphere centered on the root. Incompatible with --use-z-from-file')
+             help='represent the tree as a sphere centered on the root.')
     parser.add_argument('--ignore-missing', action='store_true', required=False, 
              help='ignore points missing from the tree')
     
@@ -163,8 +201,6 @@ if __name__ == "__main__":
         print("Error: --drag must be between 0.0 and 1.0")
         exit(1)
 
-    if args.use_z_from_file and args.spherical_layout:
-        print("Warning: --spherical-layout is incompatible with --use-z-from-file and will be ignored.")
 
     ## reading coordinates
 
@@ -223,26 +259,32 @@ if __name__ == "__main__":
         else:
             n.height = n.up.height + n.dist
 
-    ## compute the x and y of all points
 
-    for n in tree.traverse('postorder'):
-        if n.is_leaf() : # for leaves, use what's in the coordinate source file
-            n.coordinates = list( XY.loc[ n.name , coordinates ] )
-        else: # use average of children
-            #sum
-            n.coordinates = n.children[0].coordinates[:]
-            for ch in n.children[1:]:
+    if  args.use_z_from_file and args.spherical_layout:
+
+        tree = spherical_tree( tree , XY  , R = 1.0)
+
+    else:
+        ## compute the x and y of all points
+
+        for n in tree.traverse('postorder'):
+            if n.is_leaf() : # for leaves, use what's in the coordinate source file
+                n.coordinates = list( XY.loc[ n.name , coordinates ] )
+            else: # use average of children
+                #sum
+                n.coordinates = n.children[0].coordinates[:]
+                for ch in n.children[1:]:
+                    for i in range(len( n.coordinates )):
+                        n.coordinates[i] += ch.coordinates[i]
+                # normalize
                 for i in range(len( n.coordinates )):
-                    n.coordinates[i] += ch.coordinates[i]
-            # normalize
-            for i in range(len( n.coordinates )):
-                n.coordinates[i] /= len(n.children)
+                    n.coordinates[i] /= len(n.children)
 
-    # eventually apply some drag from the ancestor
-    for n in tree.traverse('preorder'):
-        if n.is_root() or n.is_leaf():
-            continue
-        n.coordinates = [n.coordinates[i]*(1-drag) + n.up.coordinates[i]*drag for i in range(len(n.coordinates))]
+        # eventually apply some drag from the ancestor
+        for n in tree.traverse('preorder'):
+            if n.is_root() or n.is_leaf():
+                continue
+            n.coordinates = [n.coordinates[i]*(1-drag) + n.up.coordinates[i]*drag for i in range(len(n.coordinates))]
 
     if not args.use_z_from_file:
         for n in tree.traverse('postorder'):
